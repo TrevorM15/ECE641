@@ -11,7 +11,7 @@ int main (int argc, char **argv)
 {
   FILE *fp;
   struct TIFF_img input_img, output_img, output_err_img, output_blur_img, rest_img, rest_blur_img;
-  double **img, **error_img, **blur_img,**clean_img,**cb_img,**bnn_img, sigma_hat[20],cost[20], p=0,N, gcx=0, gcx2=0,v,theta1=0, theta2=0,**e, H[5][5];
+  double **img, **error_img, **blur_img,**clean_img,**cb_img,**bnn_img, sigma_hat[20],cost[20],cost2[20], p=0,N, gcx=0, gcx2=0,v,theta1=0, theta2=0,**e, H[5][5], scale = 1.0/5, Hx =0, nsr;
   int32_t i,j,k,l,m,pixel;
   double sigma = pow(16,2);
 
@@ -101,6 +101,7 @@ H[2][2]=9.0/81;
 
   /*compute sigma_ML in the range 0.1<=p<=2 and plot sigma_ML vs p */
  for ( m = 1; m < 21; m++){
+   gcx = 0;
  for ( i = 1; i < input_img.height-1; i++ ){
   for ( j = 1; j < input_img.width-1; j++ ) {
     for ( k = 0; k < 3; k++){
@@ -111,8 +112,9 @@ H[2][2]=9.0/81;
   }
  }
 
- sigma_hat[m]= gcx/N; 
- //printf("%f \n ", sigma_hat[m]);
+ sigma_hat[m]= gcx/N;
+ 
+ printf("%f \n ", pow(sigma_hat[m], 10.0/m));
   }
 
   
@@ -126,29 +128,38 @@ H[2][2]=9.0/81;
   for ( j = 1; j < input_img.width-1; j++ ) {
     img[i][j] += sigma*normal();
     clean_img[i][j] = img[i][j];
+    if (clean_img[i][j]>255){clean_img[i][j]=255;}
+    else {
+      if (clean_img[i][j]>255){clean_img[i][j]=0;}
+      else {clean_img[i][j]=clean_img[i][j];}}
   }
    
 
   /* compute MAP using ICD*/
 
   for (m = 0; m < 20; m++){
+  
   for ( i = 1; i < input_img.height-1; i++ ){
   for ( j = 1; j < input_img.width-1; j++ ) {
+    gcx=0;
+    gcx2=0;
      for ( k = 0; k < 3; k++){
       for (l = 0; l < 3; l++){
 	gcx += g[k][l]*clean_img[i+k-1][j+l-1];
-	gcx2 += g[k][l]*pow(clean_img[i+k-1][j+l-1]-clean_img[i][j],2);
+	gcx2 += g[k][l]*pow(clean_img[i+k-1][j+l-1]-clean_img[i][j],2.0);
 	
       }
     }
-     clean_img[i][j] = (img[i][j]+sigma/(1*sigma_hat[20])*gcx)/(1+sigma/(1*sigma_hat[20]));
-    gcx=0;
+     nsr = sigma/(scale*sigma_hat[20]);
+     clean_img[i][j] = (img[i][j]+nsr*gcx)/(1+nsr);
+    
     if (clean_img[i][j] <0){clean_img[i][j]=0;}
-    cost[m] += (1/(2*sigma))*pow(img[i][j]-clean_img[i][j],2)+(1/(2*sigma_hat[20]))*gcx2;
-    gcx2=0;
+    cost[m]+= (0.5/sigma)*pow(img[i][j]-clean_img[i][j],2.0)+(0.5/(scale*sigma_hat[20]))*gcx2;
+    
   }
   }
-  //printf("iteration %d: %f \n ", m, cost[m]);
+  printf("iteration %d: %f \n ", m, cost[m]);
+  
   }
 
   
@@ -185,32 +196,40 @@ H[2][2]=9.0/81;
   
   /* TODO: compute ICD */
   
-  for (m = 0; m <20; m++)
- for ( i = 2; i < input_img.height-2; i++ )
+  for (m = 0; m <20; m++){
+    for ( i = 2; i < input_img.height-2; i++ ){
   for ( j = 2; j < input_img.width-2; j++ ) {
+     gcx=0;
+     gcx2=0;
+    theta1=0;
+    theta2=0;
     v = cb_img[i][j];
+    Hx = 9.0/81*cb_img[i][j];
     for ( k = 0; k < 5; k++){
       for (l = 0; l < 5; l++){
 	theta1-= H[k][l]*e[i+k-2][j+l-2]/16;
-	theta2 += pow(H[k][l],2)/16;
+	theta2 += pow(H[k][l],2.0)/16;
+	Hx += h[k][l]*cb_img[i+k-2][j+l-2];
       }
     }
     for ( k = 0; k < 3; k++){
       for (l = 0; l < 3; l++){
        gcx += g[k][l]*blur_img[i+k-1][j+l-1];
+       gcx2 += g[k][l]*pow(cb_img[i+k-1][j+l-1]-cb_img[i][j],2.0);
       }
     }
-    cb_img[i][j] = (theta2*v-theta1+(1.0/sigma_hat[10])*gcx)/(theta2+ (1.0/sigma_hat[10]));
+    cb_img[i][j] = (theta2*v-theta1+(1.0/sigma_hat[20])*gcx)/(theta2+ (1.0/sigma_hat[20]));
     if( cb_img[i][j] <0){cb_img[i][j]=0;}
     for ( k = 0; k < 5; k++){
       for (l = 0; l < 5; l++){
-	e[i+k-2][j+l-2] = e[i+k-2][j+l-2]-H[k][l]*(cb_img[i][j]-v);
+	e[i+k-2][j+l-2] -= H[k][l]*(cb_img[i][j]-v);
       }
     }
-
-    gcx=0;
-    theta1=0;
-    theta2=0;
+    cost2[m] += (0.5/sigma)*pow(blur_img[i][j]-Hx,2)+(0.5/sigma_hat[20])*gcx2;
+  
+  }
+    }
+     printf("iteration %d: %f \n ", m, cost2[m]);
   }
   
   
